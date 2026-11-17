@@ -4,6 +4,8 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+import ai_module
+
 from .ai import weighted_percentage
 from .files import MAX_TEXT
 from .storage import connect
@@ -87,6 +89,15 @@ def fixed_provider(criteria: list[Criterion], resume_text: str) -> dict:
     }
 
 
+def analysis_provider(criteria: list[Criterion], resume_text: str, vacancy_text: str) -> dict:
+    if ai_module.load_settings().mode == "stub":
+        return fixed_provider(criteria, resume_text)
+    try:
+        return ai_module.analyze_resume(criteria, resume_text, vacancy_text)
+    except ai_module.AIModuleError as exc:
+        raise HTTPException(exc.http_status, exc.message) from None
+
+
 def validate_provider_result(reply: dict, criteria: dict[str, Criterion], resume_text: str) -> ProviderResult:
     try:
         result = ProviderResult.model_validate(reply)
@@ -113,7 +124,7 @@ def create_analysis(payload: AnalysisInput):
     if len(criteria) != len(payload.criteria):
         raise HTTPException(422, "Идентификаторы критериев должны быть уникальными.")
 
-    reply = fixed_provider(payload.criteria, payload.resume_text)
+    reply = analysis_provider(payload.criteria, payload.resume_text, payload.vacancy_text)
     result = validate_provider_result(reply, criteria, payload.resume_text)
     results_by_id = {row.criterion_id: row for row in result.criteria_results}
     result.criteria_results = [results_by_id[item_id] for item_id in criteria]
