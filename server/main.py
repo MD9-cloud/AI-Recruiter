@@ -1,3 +1,4 @@
+from uuid import UUID
 import asyncio
 import hmac
 import json
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import ai
-from .demo_analysis import router as demo_analysis_router
+from . import demo_analysis as saved
 from .files import MAX_BYTES, MAX_TEXT, extract, make_docx
 from .storage import DEMO, ROOT, connect, hash_password, initialize
 
@@ -99,8 +100,8 @@ app = FastAPI(title="ИИ-Рекрутер", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:53144"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 bearer = HTTPBearer(auto_error=False)
 
@@ -463,8 +464,33 @@ async def enqueue(job_id: int, payload: Batch, user: HR, request: Request):
     return {}
 
 
-if DEMO:
-    app.include_router(demo_analysis_router)
+@app.post("/api/hr/analyses", response_model=saved.SavedAnalysis, status_code=201)
+def create_hr_analysis(payload: saved.AnalysisInput, user: HR):
+    return saved.create_saved_analysis(payload, user["id"])
+
+
+@app.get("/api/hr/analyses", response_model=list[saved.AnalysisHistoryItem])
+def hr_history(user: HR):
+    return saved.analysis_history_for(user["id"])
+
+
+@app.delete("/api/hr/analyses", status_code=204)
+def clear_hr_history(user: HR):
+    saved.clear_analysis_history_for(user["id"])
+
+
+@app.post("/api/hr/analyses/resume-text")
+def extract_hr_resume(user: HR, file: UploadFile = File(...)):
+    return saved.extract_resume_text(file)
+
+
+@app.get("/api/hr/analyses/{analysis_id}", response_model=saved.SavedAnalysis)
+def get_hr_analysis(analysis_id: UUID, user: HR):
+    return saved.get_analysis_for(analysis_id, user["id"])
+
+
+if DEMO and os.getenv("RECRUITER_PUBLIC_DEMO", "1") == "1":
+    app.include_router(saved.router)
 
 web = Path(os.getenv("RECRUITER_WEB", ROOT / "client" / "build" / "web"))
 if (web / "index.html").is_file():

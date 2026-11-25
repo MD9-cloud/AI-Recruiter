@@ -85,6 +85,10 @@ def initialize():
     with connect() as db:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
+        db.execute("BEGIN IMMEDIATE")
+        if not any(column["name"] == "owner_id" for column in db.execute("PRAGMA table_info(demo_analyses)")):
+            db.execute("ALTER TABLE demo_analyses ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE")
+        db.execute("CREATE INDEX IF NOT EXISTS demo_analyses_owner ON demo_analyses(owner_id)")
         db.execute("UPDATE analyses SET status='error',error='Сервер перезапустился. Повторите анализ.' WHERE status IN ('queued','running')")
         db.execute("DELETE FROM sessions WHERE expires <= unixepoch()")
         if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():

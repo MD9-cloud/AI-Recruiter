@@ -12,8 +12,6 @@ const _apiBase = String.fromEnvironment(
   defaultValue: 'http://caretaker.tailc28aa2.ts.net',
 );
 
-const _exampleId = '301f20ff-45bc-4e71-a3b3-284af2197188';
-
 const _criteria = [
   {'id': 'c1', 'text': 'знает Python', 'required': true, 'weight': 2},
   {
@@ -134,7 +132,8 @@ class _SignInState extends State<_SignIn> {
 
   @override
   Widget build(BuildContext context) {
-    if (_role == 'hr') return RecruiterScreen(onLogout: _logout);
+    if (_role == 'hr')
+      return RecruiterScreen(token: _token!, onLogout: _logout);
     if (_role == 'admin') {
       return Scaffold(
         appBar: AppBar(
@@ -184,8 +183,9 @@ class _SignInState extends State<_SignIn> {
 }
 
 class RecruiterScreen extends StatefulWidget {
-  const RecruiterScreen({super.key, this.onLogout});
+  const RecruiterScreen({super.key, required this.token, this.onLogout});
 
+  final String token;
   final VoidCallback? onLogout;
 
   @override
@@ -200,8 +200,9 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
   final _resume = TextEditingController(
     text: 'Год писал на Python. Прошёл учебный курс по FastAPI',
   );
-  final _id = TextEditingController(text: _exampleId);
+  final _id = TextEditingController();
   final _client = http.Client();
+  Map<String, String> get _auth => {'Authorization': 'Bearer ${widget.token}'};
 
   bool _loading = false;
   String? _error;
@@ -216,9 +217,9 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _loadHistory() async {
-    final url = Uri.parse('$_apiBase/api/demo/analyses');
+    final url = Uri.parse('$_apiBase/api/hr/analyses');
     final response = await _client
-        .get(url)
+        .get(url, headers: _auth)
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw const FormatException('History unavailable');
@@ -257,13 +258,13 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
     });
 
     try {
-      final endpoint = Uri.parse('$_apiBase/api/demo/analyses');
+      final endpoint = Uri.parse('$_apiBase/api/hr/analyses');
       final http.Response response;
       if (create) {
         response = await _client
             .post(
               endpoint,
-              headers: {'Content-Type': 'application/json'},
+              headers: {..._auth, 'Content-Type': 'application/json'},
               body: jsonEncode({
                 'vacancy_text': vacancy,
                 'resume_text': resume,
@@ -276,7 +277,9 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
         final url = endpoint.replace(
           pathSegments: [...endpoint.pathSegments, id],
         );
-        response = await _client.get(url).timeout(const Duration(seconds: 45));
+        response = await _client
+            .get(url, headers: _auth)
+            .timeout(const Duration(seconds: 45));
       }
 
       final body = utf8.decode(response.bodyBytes);
@@ -451,7 +454,8 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
       }
       final form = web.FormData()..appendBlob('file', file, file.name);
       final request = web.HttpRequest()
-        ..open('POST', '$_apiBase/api/demo/analyses/resume-text');
+        ..open('POST', '$_apiBase/api/hr/analyses/resume-text')
+        ..setRequestHeader('Authorization', 'Bearer ${widget.token}');
       final finished = Future.any([
         request.onLoad.first,
         request.onError.first.then(
@@ -505,7 +509,7 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
     setState(() => _loading = true);
     try {
       final response = await _client
-          .delete(Uri.parse('$_apiBase/api/demo/analyses'))
+          .delete(Uri.parse('$_apiBase/api/hr/analyses'), headers: _auth)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 204) throw const FormatException();
       if (!mounted) return;

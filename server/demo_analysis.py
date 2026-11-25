@@ -121,6 +121,10 @@ def validate_provider_result(reply: dict, criteria: dict[str, Criterion], resume
 
 @router.post("", response_model=SavedAnalysis, status_code=201)
 def create_analysis(payload: AnalysisInput):
+    return create_saved_analysis(payload, None)
+
+
+def create_saved_analysis(payload: AnalysisInput, owner_id: int | None):
     criteria = {item.id: item for item in payload.criteria}
     if not criteria:
         raise HTTPException(422, "Добавьте хотя бы один подтверждённый HR критерий.")
@@ -147,7 +151,7 @@ def create_analysis(payload: AnalysisInput):
         ],
     )
     with connect() as db:
-        db.execute("INSERT INTO demo_analyses(id,result) VALUES(?,?)", (str(saved.analysis_id), saved.model_dump_json()))
+        db.execute("INSERT INTO demo_analyses(id,result,owner_id) VALUES(?,?,?)", (str(saved.analysis_id), saved.model_dump_json(), owner_id))
     return saved
 
 
@@ -159,19 +163,27 @@ class AnalysisHistoryItem(BaseModel):
 
 @router.get("", response_model=list[AnalysisHistoryItem])
 def analysis_history():
+    return analysis_history_for(None)
+
+
+def analysis_history_for(owner_id: int | None):
     with connect() as db:
         rows = db.execute(
             "SELECT id, json_extract(result, '$.score_percent') AS score_percent "
             " , COALESCE(json_extract(result, '$.candidate_name'), '') AS candidate_name "
-            "FROM demo_analyses ORDER BY rowid DESC LIMIT 20"
+            "FROM demo_analyses WHERE owner_id IS ? ORDER BY rowid DESC LIMIT 20", (owner_id,)
         ).fetchall()
     return [AnalysisHistoryItem(analysis_id=row["id"], score_percent=row["score_percent"], candidate_name=row["candidate_name"]) for row in rows]
 
 
 @router.delete("", status_code=204)
 def clear_analysis_history():
+    return clear_analysis_history_for(None)
+
+
+def clear_analysis_history_for(owner_id: int | None):
     with connect() as db:
-        db.execute("DELETE FROM demo_analyses")
+        db.execute("DELETE FROM demo_analyses WHERE owner_id IS ?", (owner_id,))
 
 
 @router.post("/resume-text")
@@ -184,8 +196,12 @@ def extract_resume_text(file: UploadFile = File(...)):
 
 @router.get("/{analysis_id}", response_model=SavedAnalysis)
 def get_analysis(analysis_id: UUID):
+    return get_analysis_for(analysis_id, None)
+
+
+def get_analysis_for(analysis_id: UUID, owner_id: int | None):
     with connect() as db:
-        row = db.execute("SELECT result FROM demo_analyses WHERE id=?", (str(analysis_id),)).fetchone()
+        row = db.execute("SELECT result FROM demo_analyses WHERE id=? AND owner_id IS ?", (str(analysis_id), owner_id)).fetchone()
     if row is None:
         raise HTTPException(404, "Анализ с таким ID не найден.")
     return SavedAnalysis.model_validate_json(row["result"])
