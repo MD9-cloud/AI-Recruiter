@@ -364,6 +364,7 @@ class RecruiterScreen extends StatefulWidget {
 }
 
 class _RecruiterScreenState extends State<RecruiterScreen> {
+  Map<String, dynamic>? _selectedJob;
   final _vacancy = TextEditingController(
     text: 'Ищем Python-разработчика. Нужен опыт разработки API, Docker будет плюсом.',
   );
@@ -434,13 +435,17 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
       if (create) {
         response = await _client
             .post(
-              endpoint,
+              _selectedJob != null
+                  ? Uri.parse(
+                      "$_apiBase/api/hr/jobs/${_selectedJob!['id']}/analyses",
+                    )
+                  : endpoint,
               headers: {..._auth, 'Content-Type': 'application/json'},
               body: jsonEncode({
-                'vacancy_text': vacancy,
+                if (_selectedJob == null) 'vacancy_text': vacancy,
                 'resume_text': resume,
                 'candidate_name': _name.text.trim(),
-                'criteria': _criteria,
+                if (_selectedJob == null) 'criteria': _criteria,
               }),
             )
             .timeout(const Duration(seconds: 45));
@@ -511,6 +516,7 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
           children: [
             TextField(
               controller: _vacancy,
+              readOnly: _selectedJob != null,
               minLines: 4,
               maxLines: 8,
               decoration: const InputDecoration(
@@ -548,9 +554,14 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            const Text(
-              'Критерии контрольного примера: Python, FastAPI, Docker.',
-            ),
+            if (_selectedJob case final job?)
+              Text(
+                "Выбрана вакансия «${job['title']}», критериев: ${(job['criteria'] as List).length}",
+              )
+            else
+              const Text(
+                'Критерии контрольного примера: Python, FastAPI, Docker.',
+              ),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: _loading ? null : () => _request(create: true),
@@ -589,12 +600,22 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
         title: const Text('ИИ-Рекрутер'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    JobsScreen(apiBase: _apiBase, token: widget.token),
-              ),
-            ),
+            onPressed: _loading
+                ? null
+                : () async {
+                    final job = await Navigator.of(context).push(
+                      MaterialPageRoute<Map<String, dynamic>>(
+                        builder: (_) =>
+                            JobsScreen(apiBase: _apiBase, token: widget.token),
+                      ),
+                    );
+                    if (!mounted || job == null) return;
+                    setState(() {
+                      _selectedJob = job;
+                      _vacancy.text = job['body'] as String;
+                      _result = null;
+                    });
+                  },
             child: const Text('Вакансии'),
           ),
           if (widget.onLogout != null)

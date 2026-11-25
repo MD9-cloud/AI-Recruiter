@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 import ai_module
 
-from .ai import weighted_percentage
+from .ai import redact, weighted_percentage
 from .files import MAX_BYTES, MAX_TEXT, extract
 from .storage import connect
 
@@ -66,6 +66,8 @@ class ProviderResult(BaseModel):
 
 
 class SavedAnalysis(ProviderResult):
+    job_id: int | None = None
+    job_version: int | None = None
     candidate_name: str = Field(default="", max_length=120)
     analysis_id: UUID
     score_percent: float
@@ -92,11 +94,11 @@ def fixed_provider(criteria: list[Criterion], resume_text: str) -> dict:
     }
 
 
-def analysis_provider(criteria: list[Criterion], resume_text: str, vacancy_text: str) -> dict:
-    if ai_module.load_settings().mode == "stub":
+def analysis_provider(criteria: list[Criterion], resume_text: str, vacancy_text: str, *, control_only=True) -> dict:
+    if control_only and ai_module.load_settings().mode == "stub":
         return fixed_provider(criteria, resume_text)
     try:
-        return ai_module.analyze_resume(criteria, resume_text, vacancy_text)
+        return ai_module.analyze_resume(criteria, redact(resume_text), vacancy_text)
     except ai_module.AIModuleError as exc:
         raise HTTPException(exc.http_status, exc.message) from None
 
@@ -124,14 +126,15 @@ def create_analysis(payload: AnalysisInput):
     return create_saved_analysis(payload, None)
 
 
-def create_saved_analysis(payload: AnalysisInput, owner_id: int | None):
+def create_saved_analysis(payload: AnalysisInput, owner_id: int | None, *, job_id=None, job_version=None):
     criteria = {item.id: item for item in payload.criteria}
     if not criteria:
         raise HTTPException(422, "Добавьте хотя бы один подтверждённый HR критерий.")
     if len(criteria) != len(payload.criteria):
         raise HTTPException(422, "Идентификаторы критериев должны быть уникальными.")
 
-    reply = analysis_provider(payload.criteria, payload.resume_text, payload.vacancy_text)
+    provider_options = {} if job_id is None else {"control_only": False}
+    reply = analysis_provider(payload.criteria, payload.resume_text, payload.vacancy_text, **provider_options)
     result = validate_provider_result(reply, criteria, payload.resume_text)
     results_by_id = {row.criterion_id: row for row in result.criteria_results}
     result.criteria_results = [results_by_id[item_id] for item_id in criteria]
@@ -139,6 +142,8 @@ def create_saved_analysis(payload: AnalysisInput, owner_id: int | None):
     saved = SavedAnalysis(
         **result.model_dump(),
         analysis_id=uuid4(),
+        job_id=job_id,
+        job_version=job_version,
         candidate_name=payload.candidate_name.strip(),
         criteria=payload.criteria,
         score_percent=weighted_percentage(

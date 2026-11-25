@@ -22,6 +22,8 @@ class _JobsScreenState extends State<JobsScreen> {
   final _client = http.Client();
   List<Map<String, dynamic>> _jobs = [];
   Map<String, dynamic>? _selected;
+  List<Map<String, dynamic>> _criteria = [];
+  bool _dirty = false;
   String? _error;
   bool _busy = false;
 
@@ -85,6 +87,10 @@ class _JobsScreenState extends State<JobsScreen> {
   void _select(Map<String, dynamic>? job) {
     setState(() {
       _selected = job;
+      _dirty = false;
+      _criteria = (job?['criteria'] as List? ?? [])
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
       _title.text = (job?['title'] as String?) ?? '';
       _body.text = (job?['body'] as String?) ?? '';
       _error = null;
@@ -101,7 +107,7 @@ class _JobsScreenState extends State<JobsScreen> {
     final data = jsonEncode({
       'title': title,
       'body': body,
-      'criteria': selected?['criteria'] ?? [],
+      'criteria': _criteria,
       'sources': selected?['sources'] ?? [],
     });
     final headers = {..._auth, 'Content-Type': 'application/json'};
@@ -157,7 +163,78 @@ class _JobsScreenState extends State<JobsScreen> {
         },
       );
       final result = _decode(request.status ?? 0, request.responseText ?? '');
-      if (mounted) _body.text = result['body'] as String;
+      if (mounted)
+        setState(() {
+          _body.text = result['body'] as String;
+          _dirty = true;
+        });
+    });
+  }
+
+  Future<void> _editCriterion([int? index]) async {
+    final row = index == null ? null : _criteria[index];
+    var text = row?['text'] as String? ?? '';
+    var required = row?['required'] as bool? ?? true;
+    var weight = row?['weight'] as int? ?? 2;
+    final edited = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Критерий вакансии'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                initialValue: text,
+                maxLength: 500,
+                decoration: const InputDecoration(labelText: 'Требование'),
+                onChanged: (value) => update(() => text = value),
+              ),
+              CheckboxListTile(
+                title: const Text('Обязательный'),
+                value: required,
+                onChanged: (value) => update(() {
+                  required = value ?? false;
+                  if (row == null) weight = required ? 2 : 1;
+                }),
+              ),
+              DropdownButton<int>(
+                value: weight,
+                items: [
+                  for (var value = 1; value <= 5; value++)
+                    DropdownMenuItem(value: value, child: Text('Вес $value')),
+                ],
+                onChanged: (value) => update(() => weight = value!),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: text.trim().isEmpty
+                  ? null
+                  : () => Navigator.pop(context, {
+                      'text': text.trim(),
+                      'required': required,
+                      'weight': weight,
+                    }),
+              child: const Text('Готово'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || edited == null) return;
+    setState(() {
+      if (index == null) {
+        _criteria.add(edited);
+      } else {
+        _criteria[index] = edited;
+      }
+      _dirty = true;
     });
   }
 
@@ -195,6 +272,7 @@ class _JobsScreenState extends State<JobsScreen> {
               const Divider(),
               TextField(
                 controller: _title,
+                onChanged: (_) => setState(() => _dirty = true),
                 readOnly: _busy,
                 maxLength: 200,
                 decoration: const InputDecoration(
@@ -212,6 +290,7 @@ class _JobsScreenState extends State<JobsScreen> {
               const SizedBox(height: 12),
               TextField(
                 controller: _body,
+                onChanged: (_) => setState(() => _dirty = true),
                 readOnly: _busy,
                 maxLength: 30000,
                 minLines: 5,
@@ -220,6 +299,48 @@ class _JobsScreenState extends State<JobsScreen> {
                   labelText: 'Описание вакансии',
                   border: OutlineInputBorder(),
                 ),
+              ),
+              Text(
+                'Критерии вакансии',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              for (final (index, criterion) in _criteria.indexed)
+                ListTile(
+                  title: Text(criterion['text'] as String),
+                  subtitle: Text(
+                    "${criterion['required'] == true ? 'Обязательный' : 'Желательный'}, вес ${criterion['weight']}",
+                  ),
+                  onTap: _busy ? null : () => _editCriterion(index),
+                  trailing: IconButton(
+                    tooltip: 'Удалить критерий',
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() {
+                            _criteria.removeAt(index);
+                            _dirty = true;
+                          }),
+                    icon: const Icon(Icons.close),
+                  ),
+                ),
+              TextButton.icon(
+                onPressed: _busy || _criteria.length >= 50
+                    ? null
+                    : () => _editCriterion(),
+                icon: const Icon(Icons.add),
+                label: const Text('Добавить критерий'),
+              ),
+              if (_selected != null && (_dirty || _criteria.isEmpty))
+                Text(
+                  _criteria.isEmpty
+                      ? 'Добавьте критерий для анализа.'
+                      : 'Сохраните изменения перед выбором.',
+                ),
+              OutlinedButton(
+                onPressed:
+                    _busy || _dirty || _selected == null || _criteria.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, _selected),
+                child: const Text('Анализировать по этой вакансии'),
               ),
               if (_error case final error?) Text(error),
               FilledButton(

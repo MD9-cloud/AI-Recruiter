@@ -469,6 +469,23 @@ def create_hr_analysis(payload: saved.AnalysisInput, user: HR):
     return saved.create_saved_analysis(payload, user["id"])
 
 
+class JobAnalysisInput(Input):
+    resume_text: str = Field(min_length=1, max_length=MAX_TEXT)
+    candidate_name: str = Field(default="", max_length=120)
+
+
+@app.post("/api/hr/jobs/{job_id}/analyses", response_model=saved.SavedAnalysis, status_code=201)
+def analyze_hr_job(job_id: int, payload: JobAnalysisInput, user: HR):
+    with connect() as db:
+        job = job_json(job_for(db, job_id, user))
+    analysis = saved.AnalysisInput(
+        **payload.model_dump(),
+        vacancy_text=job["body"],
+        criteria=[{"id": f"c{index}", **criterion} for index, criterion in enumerate(job["criteria"], 1)],
+    )
+    return saved.create_saved_analysis(analysis, user["id"], job_id=job_id, job_version=job["version"])
+
+
 @app.get("/api/hr/analyses", response_model=list[saved.AnalysisHistoryItem])
 def hr_history(user: HR):
     return saved.analysis_history_for(user["id"])
