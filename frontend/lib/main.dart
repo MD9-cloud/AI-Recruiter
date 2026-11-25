@@ -32,11 +32,161 @@ const _statusLabels = {
 };
 
 void main() => runApp(
-  const MaterialApp(debugShowCheckedModeBanner: false, home: RecruiterScreen()),
+  const MaterialApp(debugShowCheckedModeBanner: false, home: _SignIn()),
 );
 
+class _SignIn extends StatefulWidget {
+  const _SignIn();
+
+  @override
+  State<_SignIn> createState() => _SignInState();
+}
+
+class _SignInState extends State<_SignIn> {
+  final _login = TextEditingController();
+  final _password = TextEditingController();
+  String? _token;
+  String? _role;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _login.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_busy || _login.text.trim().isEmpty || _password.text.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_apiBase/api/login'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'login': _login.text.trim(),
+              'password': _password.text,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (response.statusCode == 401) {
+        setState(() => _error = 'Проверьте логин и пароль.');
+        return;
+      }
+      if (response.statusCode != 200) throw const FormatException();
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      if (data is! Map ||
+          data['token'] is! String ||
+          !['hr', 'admin'].contains(data['role'])) {
+        throw const FormatException();
+      }
+      setState(() {
+        _token = data['token'] as String;
+        _role = data['role'] as String;
+        _password.clear();
+      });
+    } on Exception {
+      if (mounted)
+        setState(
+          () => _error = 'Не удалось войти. Проверьте подключение к серверу.',
+        );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    if (_busy || _token == null) return;
+    setState(() => _busy = true);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_apiBase/api/logout'),
+            headers: {'Authorization': 'Bearer $_token'},
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200 && response.statusCode != 401) {
+        throw const FormatException();
+      }
+      if (mounted)
+        setState(() {
+          _token = null;
+          _role = null;
+          _error = null;
+        });
+    } on Exception {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось завершить сеанс. Повторите выход.'),
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_role == 'hr') return RecruiterScreen(onLogout: _logout);
+    if (_role == 'admin') {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Администратор'),
+          actions: [
+            TextButton(
+              onPressed: _busy ? null : _logout,
+              child: const Text('Выйти'),
+            ),
+          ],
+        ),
+        body: const Center(child: Text('Вы вошли как администратор.')),
+      );
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('ИИ-Рекрутер')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.all(24),
+            children: [
+              TextField(
+                controller: _login,
+                decoration: const InputDecoration(labelText: 'Логин'),
+              ),
+              TextField(
+                controller: _password,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Пароль'),
+                onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 16),
+              if (_error case final error?) Text(error),
+              FilledButton(
+                onPressed: _busy ? null : _submit,
+                child: const Text('Войти'),
+              ),
+              if (_busy) const LinearProgressIndicator(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class RecruiterScreen extends StatefulWidget {
-  const RecruiterScreen({super.key});
+  const RecruiterScreen({super.key, this.onLogout});
+
+  final VoidCallback? onLogout;
 
   @override
   State<RecruiterScreen> createState() => _RecruiterScreenState();
@@ -261,7 +411,13 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
       ),
     );
     return Scaffold(
-      appBar: AppBar(title: const Text('ИИ-Рекрутер')),
+      appBar: AppBar(
+        title: const Text('ИИ-Рекрутер'),
+        actions: [
+          if (widget.onLogout != null)
+            TextButton(onPressed: widget.onLogout, child: const Text('Выйти')),
+        ],
+      ),
       drawer: wide ? null : Drawer(child: _historyPanel(closeOnSelect: true)),
       body: Row(
         children: [
