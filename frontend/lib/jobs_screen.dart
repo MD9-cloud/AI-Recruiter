@@ -171,6 +171,54 @@ class _JobsScreenState extends State<JobsScreen> {
     });
   }
 
+  Future<void> _suggestCriteria() async {
+    final body = _body.text.trim();
+    if (body.isEmpty) {
+      setState(() => _error = 'Введите описание вакансии.');
+      return;
+    }
+    if (_criteria.isNotEmpty) {
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Заменить текущий список критериев?'),
+          content: const Text(
+            'Предложения ИИ заменят список в редакторе. Изменения вступят в силу после сохранения вакансии.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Предложить'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || replace != true) return;
+    }
+    await _run(() async {
+      final response = await _client
+          .post(
+            _url('hr/job-criteria'),
+            headers: {..._auth, 'Content-Type': 'application/json'},
+            body: jsonEncode({'body': body}),
+          )
+          .timeout(const Duration(seconds: 135));
+      final suggestions = (_decode(
+        response.statusCode,
+        utf8.decode(response.bodyBytes),
+      ) as List).cast<Map<String, dynamic>>();
+      if (!mounted) return;
+      setState(() {
+        _criteria = suggestions;
+        _dirty = true;
+      });
+    });
+  }
+
   Future<void> _editCriterion([int? index]) async {
     final row = index == null ? null : _criteria[index];
     var text = row?['text'] as String? ?? '';
@@ -303,6 +351,14 @@ class _JobsScreenState extends State<JobsScreen> {
               Text(
                 'Критерии вакансии',
                 style: Theme.of(context).textTheme.titleLarge,
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : _suggestCriteria,
+                  icon: const Icon(Icons.auto_awesome),
+                  label: const Text('Предложить критерии с ИИ'),
+                ),
               ),
               for (final (index, criterion) in _criteria.indexed)
                 ListTile(

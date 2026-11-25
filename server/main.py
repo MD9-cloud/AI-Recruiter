@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import ai
+import ai_module
+
 from . import demo_analysis as saved
 from .files import MAX_BYTES, MAX_TEXT, extract, make_docx
 from .storage import DEMO, ROOT, connect, hash_password, initialize
@@ -467,6 +469,15 @@ async def enqueue(job_id: int, payload: Batch, user: HR, request: Request):
 @app.post("/api/hr/analyses", response_model=saved.SavedAnalysis, status_code=201)
 def create_hr_analysis(payload: saved.AnalysisInput, user: HR):
     return saved.create_saved_analysis(payload, user["id"])
+
+
+@app.post("/api/hr/job-criteria", response_model=list[ai.Criterion])
+def suggest_hr_job_criteria(payload: Body, user: HR):
+    try:
+        suggestions = ai_module.suggest_criteria(payload.body)
+    except ai_module.AIModuleError as exc:
+        raise HTTPException(exc.http_status, exc.message) from None
+    return [{key: item[key] for key in ("text", "required", "weight")} for item in suggestions]
 
 
 class JobAnalysisInput(Input):
