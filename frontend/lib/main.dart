@@ -14,17 +14,6 @@ const _apiBase = String.fromEnvironment(
   defaultValue: 'http://caretaker.tailc28aa2.ts.net',
 );
 
-const _criteria = [
-  {'id': 'c1', 'text': 'знает Python', 'required': true, 'weight': 2},
-  {
-    'id': 'c2',
-    'text': 'разрабатывал API на FastAPI',
-    'required': true,
-    'weight': 2,
-  },
-  {'id': 'c3', 'text': 'работал с Docker', 'required': false, 'weight': 1},
-];
-
 const _statusLabels = {
   'confirmed': 'Подтверждено',
   'partial': 'Частично подтверждено',
@@ -365,13 +354,9 @@ class RecruiterScreen extends StatefulWidget {
 
 class _RecruiterScreenState extends State<RecruiterScreen> {
   Map<String, dynamic>? _selectedJob;
-  final _vacancy = TextEditingController(
-    text: 'Ищем Python-разработчика. Нужен опыт разработки API, Docker будет плюсом.',
-  );
   final _name = TextEditingController();
-  final _resume = TextEditingController(
-    text: 'Год писал на Python. Прошёл учебный курс по FastAPI',
-  );
+  final _resume = TextEditingController();
+  late Future<List<Map<String, dynamic>>> _jobs;
   final _id = TextEditingController();
   final _client = http.Client();
   Map<String, String> get _auth => {'Authorization': 'Bearer ${widget.token}'};
@@ -386,6 +371,18 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
   void initState() {
     super.initState();
     _history = _loadHistory();
+    _jobs = _loadJobs();
+  }
+
+  Future<List<Map<String, dynamic>>> _loadJobs() async {
+    final response = await _client
+        .get(Uri.parse('$_apiBase/api/jobs'), headers: _auth)
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      throw const FormatException('Не удалось загрузить вакансии.');
+    }
+    return (jsonDecode(utf8.decode(response.bodyBytes)) as List)
+        .cast<Map<String, dynamic>>();
   }
 
   Future<List<Map<String, dynamic>>> _loadHistory() async {
@@ -403,7 +400,6 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
   @override
   void dispose() {
     _client.close();
-    _vacancy.dispose();
     _name.dispose();
     _resume.dispose();
     _id.dispose();
@@ -411,12 +407,12 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
   }
 
   Future<void> _request({required bool create}) async {
-    final vacancy = _vacancy.text.trim();
+    final job = _selectedJob;
     final resume = _resume.text.trim();
     final id = _id.text.trim();
 
-    if (create && (vacancy.isEmpty || resume.isEmpty)) {
-      setState(() => _error = 'Заполни текст вакансии и резюме.');
+    if (create && (job == null || resume.isEmpty)) {
+      setState(() => _error = 'Выбери вакансию и введи текст резюме.');
       return;
     }
     if (!create && id.isEmpty) {
@@ -435,17 +431,11 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
       if (create) {
         response = await _client
             .post(
-              _selectedJob != null
-                  ? Uri.parse(
-                      "$_apiBase/api/hr/jobs/${_selectedJob!['id']}/analyses",
-                    )
-                  : endpoint,
+              Uri.parse("$_apiBase/api/hr/jobs/${job!['id']}/analyses"),
               headers: {..._auth, 'Content-Type': 'application/json'},
               body: jsonEncode({
-                if (_selectedJob == null) 'vacancy_text': vacancy,
                 'resume_text': resume,
                 'candidate_name': _name.text.trim(),
-                if (_selectedJob == null) 'criteria': _criteria,
               }),
             )
             .timeout(const Duration(seconds: 45));
@@ -514,15 +504,50 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            TextField(
-              controller: _vacancy,
-              readOnly: _selectedJob != null,
-              minLines: 4,
-              maxLines: 8,
-              decoration: const InputDecoration(
-                labelText: 'Текст вакансии',
-                border: OutlineInputBorder(),
-              ),
+            FutureBuilder(
+              future: _jobs,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const LinearProgressIndicator();
+                }
+                if (snapshot.hasError) {
+                  return TextButton(
+                    onPressed: () => setState(() => _jobs = _loadJobs()),
+                    child: const Text('Повторить загрузку вакансий'),
+                  );
+                }
+                final jobs = snapshot.data!;
+                if (jobs.isEmpty) {
+                  return const Text('Создайте вакансию в разделе «Вакансии».');
+                }
+                final selectedId = _selectedJob?['id'];
+                return DropdownButton<int>(
+                  isExpanded: true,
+                  hint: const Text('Выберите вакансию'),
+                  value: jobs.any((job) => job['id'] == selectedId)
+                      ? selectedId as int?
+                      : null,
+                  items: [
+                    for (final job in jobs)
+                      DropdownMenuItem(
+                        value: job['id'] as int,
+                        child: Text(
+                          job['title'] as String,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _loading
+                      ? null
+                      : (id) => setState(() {
+                          _selectedJob = jobs.firstWhere(
+                            (job) => job['id'] == id,
+                          );
+                          _error = null;
+                          _result = null;
+                        }),
+                );
+              },
             ),
             const SizedBox(height: 16),
             TextField(
@@ -556,15 +581,18 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
             const SizedBox(height: 12),
             if (_selectedJob case final job?)
               Text(
-                "Выбрана вакансия «${job['title']}», критериев: ${(job['criteria'] as List).length}",
-              )
-            else
-              const Text(
-                'Критерии контрольного примера: Python, FastAPI, Docker.',
+                (job['criteria'] as List).isEmpty
+                    ? 'Добавьте и сохраните критерии в разделе «Вакансии».'
+                    : "Критериев для анализа: ${(job['criteria'] as List).length}",
               ),
             const SizedBox(height: 12),
             FilledButton(
-              onPressed: _loading ? null : () => _request(create: true),
+              onPressed:
+                  _loading ||
+                      _selectedJob == null ||
+                      (_selectedJob!['criteria'] as List).isEmpty
+                  ? null
+                  : () => _request(create: true),
               child: const Text('Анализировать'),
             ),
             const SizedBox(height: 24),
@@ -609,10 +637,10 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
                             JobsScreen(apiBase: _apiBase, token: widget.token),
                       ),
                     );
-                    if (!mounted || job == null) return;
+                    if (!mounted) return;
                     setState(() {
+                      _jobs = _loadJobs();
                       _selectedJob = job;
-                      _vacancy.text = job['body'] as String;
                       _result = null;
                     });
                   },
@@ -842,7 +870,6 @@ class _AnalysisResult extends StatelessWidget {
     final score = (result['score_percent'] as num).toDouble();
     final criteria = result['criteria'];
     final titles = <Object?, Object?>{
-      for (final criterion in _criteria) criterion['id']: criterion['text'],
       if (criteria is List)
         for (final criterion in criteria.whereType<Map>())
           criterion['id']: criterion['text'],
