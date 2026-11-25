@@ -1,13 +1,13 @@
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 import ai_module
 
 from .ai import weighted_percentage
-from .files import MAX_TEXT
+from .files import MAX_BYTES, MAX_TEXT, extract
 from .storage import connect
 
 router = APIRouter(prefix="/api/demo/analyses", tags=["Контрольный анализ"])
@@ -33,6 +33,7 @@ class Criterion(BaseModel):
 class AnalysisInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    candidate_name: str = Field(default="", max_length=120)
     vacancy_text: str = Field(min_length=1, max_length=MAX_TEXT)
     criteria: list[Criterion] = Field(max_length=50)
     resume_text: str = Field(min_length=1, max_length=MAX_TEXT)
@@ -51,6 +52,7 @@ class CriterionResult(BaseModel):
     status: Literal["confirmed", "partial", "unconfirmed"]
     reason: str = Field(min_length=1)
     quote: str | None
+    match_percent: int | None = Field(default=None, ge=0, le=100, strict=True)
 
 
 class ProviderResult(BaseModel):
@@ -64,6 +66,7 @@ class ProviderResult(BaseModel):
 
 
 class SavedAnalysis(ProviderResult):
+    candidate_name: str = Field(default="", max_length=120)
     analysis_id: UUID
     score_percent: float
     criteria: list[Criterion]
@@ -132,9 +135,11 @@ def create_analysis(payload: AnalysisInput):
     saved = SavedAnalysis(
         **result.model_dump(),
         analysis_id=uuid4(),
+        candidate_name=payload.candidate_name.strip(),
         criteria=payload.criteria,
         score_percent=weighted_percentage(
-            (criteria[row.criterion_id].weight, FACTORS[row.status]) for row in result.criteria_results
+            (criteria[row.criterion_id].weight, row.match_percent / 100 if row.match_percent is not None else FACTORS[row.status])
+            for row in result.criteria_results
         ),
         unconfirmed_required=[
             criteria[row.criterion_id] for row in result.criteria_results
@@ -144,6 +149,37 @@ def create_analysis(payload: AnalysisInput):
     with connect() as db:
         db.execute("INSERT INTO demo_analyses(id,result) VALUES(?,?)", (str(saved.analysis_id), saved.model_dump_json()))
     return saved
+
+
+class AnalysisHistoryItem(BaseModel):
+    candidate_name: str = Field(default="", max_length=120)
+    analysis_id: UUID
+    score_percent: float
+
+
+@router.get("", response_model=list[AnalysisHistoryItem])
+def analysis_history():
+    with connect() as db:
+        rows = db.execute(
+            "SELECT id, json_extract(result, '$.score_percent') AS score_percent "
+            " , COALESCE(json_extract(result, '$.candidate_name'), '') AS candidate_name "
+            "FROM demo_analyses ORDER BY rowid DESC LIMIT 20"
+        ).fetchall()
+    return [AnalysisHistoryItem(analysis_id=row["id"], score_percent=row["score_percent"], candidate_name=row["candidate_name"]) for row in rows]
+
+
+@router.delete("", status_code=204)
+def clear_analysis_history():
+    with connect() as db:
+        db.execute("DELETE FROM demo_analyses")
+
+
+@router.post("/resume-text")
+def extract_resume_text(file: UploadFile = File(...)):
+    try:
+        return {"text": extract(file.filename or "", file.file.read(MAX_BYTES + 1))}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
 
 
 @router.get("/{analysis_id}", response_model=SavedAnalysis)

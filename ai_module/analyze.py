@@ -79,6 +79,14 @@ def check(reply: dict, items: list[dict], resume: str):
                 problems.append(f"У {cid} цитата не найдена в резюме дословно.")
                 continue
         results.append({"criterion_id": cid, "status": status, "reason": reason.strip(), "quote": quote})
+        if "match_percent" in row:
+            percent = row["match_percent"]
+            valid_range = {"confirmed": (100, 100), "partial": (1, 99), "unconfirmed": (0, 0)}
+            low, high = valid_range[status]
+            if type(percent) is not int or not low <= percent <= high:
+                problems.append(f"Invalid match_percent for {cid}: expected integer from {low} to {high}.")
+            else:
+                results[-1]["match_percent"] = percent
 
     lists = {}
     for name in ("matches", "gaps", "questions"):
