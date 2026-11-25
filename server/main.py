@@ -100,7 +100,7 @@ app = FastAPI(title="ИИ-Рекрутер", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:53144"],
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 bearer = HTTPBearer(auto_error=False)

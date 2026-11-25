@@ -7,6 +7,8 @@ import 'dart:html' as web;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'jobs_screen.dart';
+
 const _apiBase = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: 'http://caretaker.tailc28aa2.ts.net',
@@ -586,6 +588,15 @@ class _RecruiterScreenState extends State<RecruiterScreen> {
       appBar: AppBar(
         title: const Text('ИИ-Рекрутер'),
         actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    JobsScreen(apiBase: _apiBase, token: widget.token),
+              ),
+            ),
+            child: const Text('Вакансии'),
+          ),
           if (widget.onLogout != null)
             TextButton(onPressed: widget.onLogout, child: const Text('Выйти')),
         ],
