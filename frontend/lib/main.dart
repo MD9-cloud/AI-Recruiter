@@ -135,18 +135,7 @@ class _SignInState extends State<_SignIn> {
     if (_role == 'hr')
       return RecruiterScreen(token: _token!, onLogout: _logout);
     if (_role == 'admin') {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Администратор'),
-          actions: [
-            TextButton(
-              onPressed: _busy ? null : _logout,
-              child: const Text('Выйти'),
-            ),
-          ],
-        ),
-        body: const Center(child: Text('Вы вошли как администратор.')),
-      );
+      return _AdminScreen(token: _token!, onLogout: _busy ? null : _logout);
     }
     return Scaffold(
       appBar: AppBar(title: const Text('ИИ-Рекрутер')),
@@ -174,6 +163,186 @@ class _SignInState extends State<_SignIn> {
                 child: const Text('Войти'),
               ),
               if (_busy) const LinearProgressIndicator(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminScreen extends StatefulWidget {
+  const _AdminScreen({required this.token, required this.onLogout});
+
+  final String token;
+  final VoidCallback? onLogout;
+
+  @override
+  State<_AdminScreen> createState() => _AdminScreenState();
+}
+
+class _AdminScreenState extends State<_AdminScreen> {
+  final _login = TextEditingController();
+  final _password = TextEditingController();
+  List<Map<String, dynamic>> _users = [];
+  String _role = 'hr';
+  String? _error;
+  bool _busy = false;
+
+  Map<String, String> get _headers => {
+    'Authorization': 'Bearer ${widget.token}',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _updateUsers();
+  }
+
+  @override
+  void dispose() {
+    _login.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _updateUsers([Future<http.Response> Function()? action]) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      if (action != null) {
+        final response = await action().timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) {
+          final data = jsonDecode(utf8.decode(response.bodyBytes));
+          final detail = data is Map ? data['detail'] : null;
+          throw FormatException(
+            detail is String ? detail : 'Проверьте введённые данные.',
+          );
+        }
+      }
+      final response = await http
+          .get(Uri.parse('$_apiBase/api/users'), headers: _headers)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200)
+        throw const FormatException('Не удалось загрузить пользователей.');
+      final users = (jsonDecode(utf8.decode(response.bodyBytes)) as List)
+          .cast<Map<String, dynamic>>();
+      if (mounted) setState(() => _users = users);
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } on Exception {
+      if (mounted) setState(() => _error = 'Не удалось связаться с сервером.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _create() {
+    final login = _login.text.trim();
+    final password = _password.text;
+    if (login.isEmpty || password.trim().length < 12) {
+      setState(() => _error = 'Укажите логин и пароль длиной от 12 символов.');
+      return;
+    }
+    _password.clear();
+    _updateUsers(
+      () => http.post(
+        Uri.parse('$_apiBase/api/users'),
+        headers: {..._headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({'login': login, 'password': password, 'role': _role}),
+      ),
+    );
+  }
+
+  Future<void> _remove(Map<String, dynamic> user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Удалить аккаунт ${user['login']}?"),
+        content: const Text('Данные этого пользователя также будут удалены.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    await _updateUsers(
+      () => http.delete(
+        Uri.parse("$_apiBase/api/users/${user['id']}"),
+        headers: _headers,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Управление пользователями'),
+        actions: [
+          TextButton(onPressed: widget.onLogout, child: const Text('Выйти')),
+        ],
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: ListView(
+            padding: const EdgeInsets.all(24),
+            children: [
+              TextField(
+                controller: _login,
+                maxLength: 100,
+                decoration: const InputDecoration(
+                  labelText: 'Логин нового пользователя',
+                  counterText: '',
+                ),
+              ),
+              TextField(
+                controller: _password,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Пароль от 12 символов',
+                ),
+              ),
+              DropdownButton<String>(
+                value: _role,
+                items: const [
+                  DropdownMenuItem(value: 'hr', child: Text('HR')),
+                  DropdownMenuItem(
+                    value: 'admin',
+                    child: Text('Администратор'),
+                  ),
+                ],
+                onChanged: _busy
+                    ? null
+                    : (role) => setState(() => _role = role!),
+              ),
+              FilledButton(
+                onPressed: _busy ? null : _create,
+                child: const Text('Создать аккаунт'),
+              ),
+              if (_busy) const LinearProgressIndicator(),
+              if (_error case final error?) Text(error),
+              for (final user in _users)
+                ListTile(
+                  title: Text(user['login'] as String),
+                  subtitle: Text(user['role'] == 'hr' ? 'HR' : 'Администратор'),
+                  trailing: IconButton(
+                    tooltip: 'Удалить аккаунт',
+                    onPressed: _busy ? null : () => _remove(user),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ),
             ],
           ),
         ),
