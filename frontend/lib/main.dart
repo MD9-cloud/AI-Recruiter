@@ -489,6 +489,11 @@ class _AnalysisResult extends StatelessWidget {
 
     final rows = (result['criteria_results'] as List).whereType<Map>();
     final missing = result['unconfirmed_required'];
+    final scoreLabel = switch (score) {
+      < 40 => 'Низкое подтверждённое соответствие',
+      < 70 => 'Среднее подтверждённое соответствие',
+      _ => 'Высокое подтверждённое соответствие',
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -497,6 +502,7 @@ class _AnalysisResult extends StatelessWidget {
           '${score % 1 == 0 ? score.toStringAsFixed(0) : score.toString()}%',
           style: Theme.of(context).textTheme.headlineMedium,
         ),
+        Text(scoreLabel),
         const SizedBox(height: 8),
         DecoratedBox(
           decoration: BoxDecoration(
@@ -533,11 +539,17 @@ class _AnalysisResult extends StatelessWidget {
               ),
             ),
           ),
-        if (missing is List && missing.isNotEmpty)
+        if (missing is List && missing.isNotEmpty) ...[
+          const SizedBox(height: 12),
           Text(
-            'Не подтверждены обязательные критерии: '
-            '${missing.map((id) => titles[id] ?? id).join(', ')}',
+            'Неподтверждённые обязательные критерии',
+            style: Theme.of(context).textTheme.titleSmall,
           ),
+          for (final criterion in missing)
+            Text(
+              '• ${criterion is Map ? criterion['text'] ?? criterion['id'] : titles[criterion] ?? criterion}',
+            ),
+        ],
       ],
     );
   }
